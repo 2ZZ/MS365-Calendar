@@ -1,0 +1,46 @@
+services:
+  ha-calendar-sync:
+    build: .
+    container_name: ha-to-o365-sync
+    volumes:
+      # Bind mount for configuration
+      - ./config.yaml:/app/config.yaml:ro
+      # Bind mount for tokens (must authenticate locally first)
+      - ./.tokens:/app/.tokens
+    restart: unless-stopped
+    environment:
+      - TZ=UTC
+      - SYNC_INTERVAL=900 # 15 minutes between syncs
+      - MAX_RETRIES=3 # Max retries on failure before backing off
+      - BACKOFF_TIME=3600 # 1 hour backoff on repeated failures
+    # Run with startup health check and error handling
+    command: >
+      sh -c '
+      echo "[$(date)] Running startup health checks...";
+      if ! python healthcheck.py; then
+        echo "[$(date)] Health checks failed. Exiting.";
+        echo "[$(date)] Please fix configuration and re-authenticate if needed.";
+        exit 1;
+      fi;
+
+      echo "[$(date)] Health checks passed. Starting sync loop...";
+      RETRY_COUNT=0;
+      while true; do
+        echo "[$(date)] Starting sync (retry count: $$RETRY_COUNT)...";
+        if python sync.py; then
+          echo "[$(date)] Sync successful. Waiting $${SYNC_INTERVAL} seconds...";
+          RETRY_COUNT=0;
+          sleep $${SYNC_INTERVAL};
+        else
+          RETRY_COUNT=$$((RETRY_COUNT + 1));
+          if [ $$RETRY_COUNT -ge $${MAX_RETRIES} ]; then
+            echo "[$(date)] Max retries reached. Backing off for $${BACKOFF_TIME} seconds...";
+            sleep $${BACKOFF_TIME};
+            RETRY_COUNT=0;
+          else
+            echo "[$(date)] Sync failed. Retrying in 60 seconds...";
+            sleep 60;
+          fi;
+        fi;
+      done
+      '

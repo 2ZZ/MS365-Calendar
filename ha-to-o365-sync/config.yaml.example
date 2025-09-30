@@ -1,0 +1,30 @@
+# Home Assistant Configuration
+home_assistant:
+  url: "http://homeassistant.local:8123"
+  token: "your_long_lived_access_token_here"
+
+# Office 365 Configuration
+office365:
+  client_id: "your_client_id_here"
+  client_secret: "not_needed_for_device_flow"  # Can be blank or placeholder
+  tenant_id: "common"  # or your specific tenant ID
+  calendar_id: "primary"  # or specific calendar ID
+
+# Sync Configuration
+sync:
+  # Home Assistant calendar entity IDs to sync
+  ha_calendars:
+    - "calendar.home_calendar"
+    - "calendar.personal"
+
+  # How far back to sync events (days)
+  days_past: 7
+
+  # How far forward to sync events (days)
+  days_future: 90
+
+  # Prefix to add to synced events in O365 (helps identify synced events)
+  event_prefix: "[HA]"
+
+  # Delete events from O365 that no longer exist in HA
+  delete_removed_events: true

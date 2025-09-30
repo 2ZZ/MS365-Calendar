@@ -1,0 +1,32 @@
+# Configuration (will be mounted)
+config.yaml
+config.yaml.example
+
+# Tokens (will be in volume)
+.tokens/
+*.token
+
+# Documentation
+README.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Git
+.git/
+.gitignore
+
+# Logs
+*.log
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore

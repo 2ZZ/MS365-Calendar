@@ -1,0 +1,19 @@
+# Configuration
+config.yaml
+
+# Tokens
+.tokens/
+*.token
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Logs
+*.log
