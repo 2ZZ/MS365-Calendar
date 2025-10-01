@@ -2,6 +2,7 @@ services:
   ha-calendar-sync:
     build: .
     container_name: ha-to-o365-sync
+    command: ["python", "sync.py", "--continuous"]
     volumes:
       # Bind mount for configuration
       - ./config.yaml:/app/config.yaml:ro

@@ -12,10 +12,11 @@ _LOGGER = logging.getLogger(__name__)
 class HomeAssistantClient:
     """Client for interacting with Home Assistant calendar API."""
 
-    def __init__(self, url: str, token: str):
+    def __init__(self, url: str, token: str, timezone: str = "Europe/London"):
         """Initialize the HA client."""
         self.url = url.rstrip("/")
         self.token = token
+        self.timezone = timezone
         self.headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -101,15 +102,30 @@ class HomeAssistantClient:
 
     def _parse_datetime(self, dt_value: Any) -> datetime:
         """
-        Parse datetime from various formats.
+        Parse datetime from various formats, preserving timezone information.
 
         Args:
             dt_value: Datetime value (could be string, dict, or datetime)
 
         Returns:
-            Datetime object
+            Datetime object with timezone information using ZoneInfo
         """
+        from dateutil import parser
+        from zoneinfo import ZoneInfo
+        from datetime import timezone
+
         if isinstance(dt_value, datetime):
+            # If already a datetime, ensure it has timezone info with ZoneInfo
+            if dt_value.tzinfo is None:
+                # Assume configured timezone if none specified
+                local_tz = ZoneInfo(self.timezone)
+                dt_value = dt_value.replace(tzinfo=local_tz)
+            elif not isinstance(dt_value.tzinfo, ZoneInfo):
+                # Convert to ZoneInfo if it's using a different timezone type
+                local_tz = ZoneInfo(self.timezone)
+                dt_value = dt_value.astimezone(local_tz)
+
+            _LOGGER.debug(f"Processed existing datetime: {dt_value} (type: {type(dt_value)}, tzinfo type: {type(dt_value.tzinfo)})")
             return dt_value
 
         if isinstance(dt_value, dict):
@@ -119,30 +135,29 @@ class HomeAssistantClient:
             dt_str = dt_value
 
         if not dt_str:
-            return datetime.utcnow()
+            return datetime.now(timezone.utc)
 
-        # Try parsing ISO format
+        # Try parsing with dateutil which handles timezones better
         try:
-            # Remove timezone info for simplicity (we'll use UTC)
-            if "+" in dt_str:
-                dt_str = dt_str.split("+")[0]
-            if "Z" in dt_str:
-                dt_str = dt_str.replace("Z", "")
+            parsed_dt = parser.parse(dt_str)
 
-            # Try with microseconds
-            try:
-                return datetime.strptime(dt_str, "%Y-%m-%dT%H:%M:%S.%f")
-            except ValueError:
-                # Try without microseconds
-                return datetime.strptime(dt_str, "%Y-%m-%dT%H:%M:%S")
+            # If no timezone info, assume configured timezone
+            if parsed_dt.tzinfo is None:
+                local_tz = ZoneInfo(self.timezone)
+                parsed_dt = parsed_dt.replace(tzinfo=local_tz)
+            else:
+                # If dateutil created a timezone, convert it to ZoneInfo if needed
+                if not isinstance(parsed_dt.tzinfo, ZoneInfo):
+                    # Convert to configured timezone to ensure ZoneInfo
+                    local_tz = ZoneInfo(self.timezone)
+                    parsed_dt = parsed_dt.astimezone(local_tz)
 
-        except ValueError:
-            # Try date-only format
-            try:
-                return datetime.strptime(dt_str, "%Y-%m-%d")
-            except ValueError:
-                _LOGGER.warning(f"Could not parse datetime: {dt_str}")
-                return datetime.utcnow()
+            _LOGGER.debug(f"Parsed datetime: {parsed_dt} (type: {type(parsed_dt)}, tzinfo type: {type(parsed_dt.tzinfo)})")
+            return parsed_dt
+
+        except Exception as e:
+            _LOGGER.warning(f"Could not parse datetime: {dt_str}, error: {e}")
+            return datetime.now(timezone.utc)
 
     def _is_all_day_event(self, event: dict) -> bool:
         """

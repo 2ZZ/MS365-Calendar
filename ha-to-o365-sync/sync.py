@@ -34,7 +34,8 @@ class CalendarSync:
         self.interactive = interactive
         self.ha_client = HomeAssistantClient(
             config["home_assistant"]["url"],
-            config["home_assistant"]["token"]
+            config["home_assistant"]["token"],
+            config["sync"].get("timezone", "Europe/London")
         )
         self.o365_client = Office365Client(
             config["office365"]["client_id"],
@@ -170,6 +171,113 @@ class CalendarSync:
         _LOGGER.debug(f"Skipping update check - events are considered identical")
         return False
 
+    def delete_all_synced_events(self) -> bool:
+        """Delete all synced events from O365 for testing/reset purposes."""
+        _LOGGER.info("=" * 70)
+        _LOGGER.info("DELETING ALL SYNCED EVENTS FROM O365")
+        _LOGGER.info("=" * 70)
+
+        try:
+            # Authenticate with O365
+            _LOGGER.info("Authenticating with Office 365...")
+            if not self.o365_client.authenticate(interactive=self.interactive):
+                _LOGGER.error("Cannot authenticate with Office 365. Aborting delete.")
+                return False
+
+            # Get all possible calendar prefixes
+            calendar_prefixes = set()
+            for calendar_id in self.config["sync"]["ha_calendars"]:
+                calendar_name = calendar_id.split(".")[-1] if "." in calendar_id else calendar_id
+                calendar_prefix = f"[{calendar_name.capitalize()}]"
+                calendar_prefixes.add(calendar_prefix)
+
+            _LOGGER.info(f"Looking for events with prefixes: {list(calendar_prefixes)}")
+
+            # Get all synced events from O365
+            _LOGGER.info("Fetching all synced events from Office 365...")
+            o365_events = self.o365_client.get_synced_events(
+                self.start_date,
+                self.end_date,
+                list(calendar_prefixes)
+            )
+
+            if not o365_events:
+                _LOGGER.info("No synced events found to delete.")
+                return True
+
+            _LOGGER.info(f"Found {len(o365_events)} synced events to delete")
+
+            # Confirm deletion
+            if self.interactive:
+                confirm = input(f"\nAre you sure you want to delete {len(o365_events)} synced events? (yes/no): ")
+                if confirm.lower() not in ['yes', 'y']:
+                    _LOGGER.info("Deletion cancelled by user.")
+                    return True
+
+            # Delete all synced events
+            deleted = 0
+            for uid, event in o365_events.items():
+                try:
+                    _LOGGER.info(f"Deleting event: {event['summary']} (UID: {uid})")
+                    self.o365_client.delete_event(event["id"])
+                    deleted += 1
+                except Exception as e:
+                    _LOGGER.error(f"Failed to delete event {uid}: {e}")
+
+            _LOGGER.info("=" * 70)
+            _LOGGER.info(f"DELETION COMPLETE: {deleted} events deleted")
+            _LOGGER.info("=" * 70)
+            return True
+
+        except Exception as e:
+            _LOGGER.error(f"Delete operation failed: {e}", exc_info=True)
+            return False
+
+    def run_continuous(self, sync_interval: int) -> bool:
+        """Run continuous sync with configurable sleep interval."""
+        import time
+        import signal
+        import sys
+
+        _LOGGER.info("=" * 70)
+        _LOGGER.info("STARTING CONTINUOUS SYNC MODE")
+        _LOGGER.info(f"Sync interval: {sync_interval} seconds ({sync_interval//60} minutes)")
+        _LOGGER.info("Press Ctrl+C to stop")
+        _LOGGER.info("=" * 70)
+
+        # Handle graceful shutdown
+        def signal_handler(sig, frame):
+            _LOGGER.info("\nReceived interrupt signal. Stopping continuous sync...")
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
+        sync_count = 0
+        while True:
+            try:
+                sync_count += 1
+                _LOGGER.info(f"\n{'='*50}")
+                _LOGGER.info(f"SYNC #{sync_count} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                _LOGGER.info(f"{'='*50}")
+
+                # Perform sync
+                result = self.sync()
+
+                if result:
+                    _LOGGER.info(f"Sync #{sync_count} completed successfully")
+                else:
+                    _LOGGER.error(f"Sync #{sync_count} failed")
+
+                # Sleep until next sync
+                _LOGGER.info(f"Sleeping for {sync_interval} seconds until next sync...")
+                time.sleep(sync_interval)
+
+            except Exception as e:
+                _LOGGER.error(f"Error in continuous sync loop: {e}", exc_info=True)
+                _LOGGER.info(f"Waiting {sync_interval} seconds before retrying...")
+                time.sleep(sync_interval)
+
 
 def load_config(config_path: Path) -> dict:
     """Load configuration from YAML file."""
@@ -219,6 +327,21 @@ def main():
         action="store_true",
         help="Interactive mode for initial authentication (requires browser access)"
     )
+    parser.add_argument(
+        "-d", "--delete",
+        action="store_true",
+        help="Delete all synced events from O365 (for resetting/testing)"
+    )
+    parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Run in continuous mode, syncing at configured intervals"
+    )
+    parser.add_argument(
+        "--interval",
+        type=int,
+        help="Override sync interval in seconds (only with --continuous)"
+    )
 
     args = parser.parse_args()
 
@@ -228,8 +351,17 @@ def main():
     config = load_config(args.config)
     syncer = CalendarSync(config, interactive=args.interactive)
 
-    result = syncer.sync()
-    sys.exit(0 if result else 1)
+    if args.delete:
+        result = syncer.delete_all_synced_events()
+        sys.exit(0 if result else 1)
+    elif args.continuous:
+        # Get sync interval from command line or config
+        sync_interval = args.interval or config["sync"].get("sync_interval", 900)
+        result = syncer.run_continuous(sync_interval)
+        sys.exit(0 if result else 1)
+    else:
+        result = syncer.sync()
+        sys.exit(0 if result else 1)
 
 
 if __name__ == "__main__":

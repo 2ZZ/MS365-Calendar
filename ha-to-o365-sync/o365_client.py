@@ -303,8 +303,10 @@ class Office365Client:
             event.is_all_day = True
 
         if start:
+            _LOGGER.debug(f"Setting event start time: {start} (type: {type(start)}, tzinfo: {getattr(start, 'tzinfo', None)})")
             event.start = start
         if end:
+            _LOGGER.debug(f"Setting event end time: {end} (type: {type(end)}, tzinfo: {getattr(end, 'tzinfo', None)})")
             event.end = end
 
     def _normalize_event(self, event: Any) -> dict:

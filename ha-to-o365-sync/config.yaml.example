@@ -23,5 +23,11 @@ sync:
   # How far forward to sync events (days)
   days_future: 90
 
+  # Timezone for interpreting HA event times (if not specified in the event)
+  timezone: "Europe/London"
+
+  # Sleep interval between syncs in seconds (default: 900 = 15 minutes)
+  sync_interval: 900
+
   # Delete events from O365 that no longer exist in HA
   delete_removed_events: true
