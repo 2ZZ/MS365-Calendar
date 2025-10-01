@@ -5,6 +5,7 @@ from o365_client import Office365Client
 from ha_client import HomeAssistantClient
 import argparse
 import logging
+import os
 import sys
 import warnings
 from datetime import datetime, timedelta
@@ -18,7 +19,7 @@ warnings.filterwarnings("ignore", message=".*pytz.*", category=UserWarning)
 
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper()),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 _LOGGER = logging.getLogger(__name__)
@@ -43,7 +44,6 @@ class CalendarSync:
             config["office365"].get("user_principal_name")
         )
 
-        self.event_prefix = config["sync"].get("event_prefix", "[HA]")
         self.delete_removed = config["sync"].get("delete_removed_events", True)
 
         # Calculate date range
@@ -82,29 +82,39 @@ class CalendarSync:
 
             # Get all HA events
             ha_events = {}
+            calendar_prefixes = set()  # Track all possible prefixes for O365 filtering
+
             for calendar_id in self.config["sync"]["ha_calendars"]:
                 _LOGGER.info(f"Fetching events from HA calendar: {calendar_id}")
+
+                # Extract calendar name and create prefix (e.g., "calendar.ian" -> "[Ian]")
+                calendar_name = calendar_id.split(".")[-1] if "." in calendar_id else calendar_id
+                calendar_prefix = f"[{calendar_name.capitalize()}]"
+                calendar_prefixes.add(calendar_prefix)
+
                 events = self.ha_client.get_events(
                     calendar_id,
                     self.start_date,
                     self.end_date
                 )
                 for event in events:
-                    # Use UID as key, store with calendar_id
+                    # Store event with its calendar prefix
+                    event["calendar_prefix"] = calendar_prefix
                     ha_events[event["uid"]] = event
                     start_str = event["start"].strftime('%Y-%m-%d %H:%M') if event.get("start") else 'No start'
                     end_str = event["end"].strftime('%Y-%m-%d %H:%M') if event.get("end") else 'No end'
-                    _LOGGER.info(f"  HA event: {event['summary']} ({start_str} - {end_str}) UID: {event['uid']}")
+                    _LOGGER.info(f"  HA event: {event['summary']} ({start_str} - {end_str}) UID: {event['uid']} -> {calendar_prefix}")
                 _LOGGER.info(f"  Found {len(events)} events")
 
             _LOGGER.info(f"Total HA events to sync: {len(ha_events)}")
 
             # Get existing synced events from O365
             _LOGGER.info("Fetching existing synced events from Office 365...")
+            _LOGGER.info(f"Looking for events with prefixes: {list(calendar_prefixes)}")
             o365_events = self.o365_client.get_synced_events(
                 self.start_date,
                 self.end_date,
-                self.event_prefix
+                list(calendar_prefixes)  # Pass all possible prefixes
             )
             _LOGGER.info(f"Found {len(o365_events)} existing synced events in O365")
 
@@ -115,8 +125,9 @@ class CalendarSync:
 
             # Sync events from HA to O365
             for uid, ha_event in ha_events.items():
-                # Add prefix to summary for comparison
-                prefixed_summary = f"{self.event_prefix} {ha_event['summary']}"
+                # Use the calendar-specific prefix for this event
+                calendar_prefix = ha_event["calendar_prefix"]
+                prefixed_summary = f"{calendar_prefix} {ha_event['summary']}"
                 ha_event["summary"] = prefixed_summary
 
                 _LOGGER.debug(f"Processing HA event UID: {uid}, Summary: {prefixed_summary}")

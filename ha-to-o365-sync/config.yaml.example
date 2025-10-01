@@ -23,8 +23,5 @@ sync:
   # How far forward to sync events (days)
   days_future: 90
 
-  # Prefix to add to synced events in O365 (helps identify synced events)
-  event_prefix: "[HA]"
-
   # Delete events from O365 that no longer exist in HA
   delete_removed_events: true

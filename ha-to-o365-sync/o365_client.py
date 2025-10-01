@@ -124,15 +124,15 @@ class Office365Client:
         self,
         start_date: datetime,
         end_date: datetime,
-        prefix: str
+        prefixes: list[str]
     ) -> dict[str, dict[str, Any]]:
         """
-        Get events that were synced from HA (identified by prefix).
+        Get events that were synced from HA (identified by prefixes).
 
         Args:
             start_date: Start of date range
             end_date: End of date range
-            prefix: Prefix to identify synced events
+            prefixes: List of prefixes to identify synced events
 
         Returns:
             Dictionary mapping UID to event data
@@ -142,33 +142,50 @@ class Office365Client:
 
         try:
             # Get events in date range using calendarView
-            # Don't use custom query filters with calendarView as they conflict
+            # The calendarView endpoint handles date filtering automatically via start_recurring/end_recurring
+            # Don't use additional $filter queries as they conflict with calendarView
+            # Use a larger batch size and handle pagination properly
             events = self.calendar.get_events(
                 include_recurring=True,
-                start_recurring=start_date,
-                end_recurring=end_date,
-                batch=50  # Limit batch size to avoid issues
+                start_recurring=start_date,  # This handles the date filtering for calendarView
+                end_recurring=end_date,      # This handles the date filtering for calendarView
+                batch=999,  # Use maximum batch size to reduce pagination
+                limit=None  # Remove any limit to get all events
             )
 
+            _LOGGER.debug(f"Requested events from {start_date} to {end_date} with batch size 999, no limit")
+
             synced_events = {}
-            for event in events:
-                # Check if event has our prefix
-                if event.subject and event.subject.startswith(prefix):
+            total_events = 0
+            prefixed_events = 0
+
+            # Ensure we iterate through ALL events by properly handling pagination
+            # Convert to list to force complete iteration through all pages
+            all_events = list(events)
+            _LOGGER.info(f"Retrieved {len(all_events)} total events from O365 after pagination")
+
+            for event in all_events:
+                total_events += 1
+                start_str = event.start.strftime('%Y-%m-%d %H:%M') if event.start else 'No start'
+                end_str = event.end.strftime('%Y-%m-%d %H:%M') if event.end else 'No end'
+                _LOGGER.debug(f"Examining O365 event: '{event.subject}' ({start_str} - {end_str})")
+
+                # Check if event has any of our prefixes
+                if event.subject and any(event.subject.startswith(prefix) for prefix in prefixes):
+                    prefixed_events += 1
                     # Try to get UID from extended properties
                     # Debug: check what's in the event body before getting UID
                     body_preview = (event.body[:200] + '...') if event.body and len(event.body) > 200 else (event.body or 'No body')
                     _LOGGER.debug(f"Event body for '{event.subject}': {body_preview}")
 
                     uid = self._get_event_uid(event)
-                    start_str = event.start.strftime('%Y-%m-%d %H:%M') if event.start else 'No start'
-                    end_str = event.end.strftime('%Y-%m-%d %H:%M') if event.end else 'No end'
                     _LOGGER.info(f"Found existing synced event: {event.subject} ({start_str} - {end_str}) (UID: {uid}, O365 ID: {event.object_id})")
                     if uid:
                         if uid in synced_events:
                             _LOGGER.warning(f"Duplicate UID found: {uid} for event '{event.subject}' - this indicates duplicate events in O365")
                         synced_events[uid] = self._normalize_event(event)
 
-            _LOGGER.info(f"Found {len(synced_events)} synced events in O365")
+            _LOGGER.info(f"Retrieved {total_events} total events from O365, {prefixed_events} with prefixes {prefixes}, {len(synced_events)} with valid UIDs")
             return synced_events
 
         except Exception as e:
